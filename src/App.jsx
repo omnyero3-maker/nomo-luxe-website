@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import {
   Car,
@@ -17,10 +17,8 @@ import {
 /**
  * Nomo Luxe Car Rental — GitHub-ready website (Vite + React + Tailwind)
  *
- * ✅ Booking fix (fills Google Sheet columns reliably):
- * Instead of POSTing to Google Forms `formResponse` (which often leaves dropdown/date fields blank),
- * this site opens a PRE-FILLED Google Form in a new tab.
- * The customer clicks Submit → your Google Sheet columns fill correctly.
+ * ✅ Booking flow: submit to Google Sheet without showing Google Form
+ * This posts to Google Forms `formResponse` and targets a hidden iframe.
  */
 
 const BRAND = {
@@ -35,8 +33,8 @@ const BRAND = {
 const NO_PREFERENCE = "no_preference";
 
 const GOOGLE_FORM = {
-  prefillBaseUrl:
-    "https://docs.google.com/forms/d/e/1FAIpQLSdWV8ATUPXi3eTqj5xSAKyK8H5h5__8wS0zUpcfsG6xn8MSEA/viewform?usp=pp_url",
+  actionUrl:
+    "https://docs.google.com/forms/d/e/1FAIpQLSdWV8ATUPXi3eTqj5xSAKyK8H5h5__8wS0zUpcfsG6xn8MSEA/formResponse",
   entry: {
     name: "entry.817883833",
     phone: "entry.1461332940",
@@ -46,56 +44,14 @@ const GOOGLE_FORM = {
     start: "entry.783591310",
     end: "entry.205748647",
     pickupArea: "entry.1534624009",
+    message: "entry.606500971",
     acknowledgment: "entry.950095108",
-    // ✅ IMPORTANT:
-    // Add a Paragraph question in your Google Form called “Additional message / note”
-    // then paste its entry id here (example: "entry.123456789") so messages save to your Sheet.
-    message: "",
   },
   values: {
     ack:
       "I understand this is a booking request and availability is not guaranteed until confirmed by Nomo Luxe Car Rental.",
   },
 };
-
-function toGoogleVehicleValue(vehicleIdOrSentinel) {
-  // Must match your Google Form option text EXACTLY.
-  const map = {
-    [NO_PREFERENCE]: "No preference",
-    corolla2015: "Toyota Corolla 2015 - Grey",
-    corolla2023: "Toyota Corolla 2023 - White",
-    e300: "Mercedes-Benz E300",
-    gx460: "Lexus GX 460",
-    g63: "Mercedes-Benz G63",
-  };
-  return map[vehicleIdOrSentinel ?? NO_PREFERENCE] ?? "No preference";
-}
-
-function buildGooglePrefillUrl(formState) {
-  const params = new URLSearchParams();
-
-  params.set(GOOGLE_FORM.entry.name, formState.name);
-  params.set(GOOGLE_FORM.entry.phone, formState.phone);
-  params.set(GOOGLE_FORM.entry.email, formState.email);
-
-  params.set(GOOGLE_FORM.entry.requestType, formState.bookingType);
-  params.set(GOOGLE_FORM.entry.vehicle, toGoogleVehicleValue(formState.vehicle));
-
-  params.set(GOOGLE_FORM.entry.start, formState.start);
-  params.set(GOOGLE_FORM.entry.end, formState.end);
-
-  params.set(GOOGLE_FORM.entry.pickupArea, formState.pickupArea);
-
-  if (GOOGLE_FORM.entry.message) {
-    params.set(GOOGLE_FORM.entry.message, formState.message);
-  }
-
-  if (formState.acknowledgment) {
-    params.set(GOOGLE_FORM.entry.acknowledgment, GOOGLE_FORM.values.ack);
-  }
-
-  return `${GOOGLE_FORM.prefillBaseUrl}&${params.toString()}`;
-}
 
 const fleet = [
   {
@@ -104,7 +60,6 @@ const fleet = [
     tier: "Comfort",
     seats: 5,
     bags: 2,
-    transmission: "Automatic",
     mpg: "30–40",
     dailyFrom: 55,
     featured: false,
@@ -116,7 +71,6 @@ const fleet = [
     tier: "Comfort",
     seats: 5,
     bags: 2,
-    transmission: "Automatic",
     mpg: "30–41",
     dailyFrom: 65,
     featured: true,
@@ -128,7 +82,6 @@ const fleet = [
     tier: "Executive",
     seats: 5,
     bags: 3,
-    transmission: "Automatic",
     mpg: "22–30",
     dailyFrom: 150,
     featured: false,
@@ -140,7 +93,6 @@ const fleet = [
     tier: "Luxe SUV",
     seats: 7,
     bags: 5,
-    transmission: "Automatic",
     mpg: "15–19",
     dailyFrom: 250,
     featured: false,
@@ -152,7 +104,6 @@ const fleet = [
     tier: "Ultra Luxe",
     seats: 5,
     bags: 4,
-    transmission: "Automatic",
     mpg: "13–17",
     dailyFrom: 950,
     featured: false,
@@ -204,14 +155,19 @@ function daysBetween(start, end) {
   return Math.max(0, d);
 }
 
-// Dev-only self tests
-function runSelfTests() {
-  const vehicleValues = [NO_PREFERENCE, ...fleet.map((c) => c.id)];
-  if (vehicleValues.some((v) => v === "")) throw new Error("SelfTest: option value cannot be empty.");
-  if (toGoogleVehicleValue("corolla2023") !== "Toyota Corolla 2023 - White") throw new Error("SelfTest: mapping mismatch.");
-  if (daysBetween("2026-01-09", "2026-01-11") !== 2) throw new Error("SelfTest: daysBetween mismatch.");
+function toGoogleVehicleValue(vehicleIdOrSentinel) {
+  const map = {
+    [NO_PREFERENCE]: "No preference",
+    corolla2015: "Toyota Corolla 2015 - Grey",
+    corolla2023: "Toyota Corolla 2023 - White",
+    e300: "Mercedes-Benz E300",
+    gx460: "Lexus GX 460",
+    g63: "Mercedes-Benz G63",
+  };
+  return map[vehicleIdOrSentinel ?? NO_PREFERENCE] ?? "No preference";
 }
 
+// Minimal UI primitives
 function Card({ className = "", children }) {
   return <div className={cn("border bg-white", className)}>{children}</div>;
 }
@@ -234,7 +190,10 @@ function Button({ className = "", variant = "default", size = "md", ...props }) 
     ghost: "bg-transparent hover:bg-black/5",
   };
   return (
-    <button className={cn(base, sizes[size] ?? sizes.md, variants[variant] ?? variants.default, className)} {...props} />
+    <button
+      className={cn(base, sizes[size] ?? sizes.md, variants[variant] ?? variants.default, className)}
+      {...props}
+    />
   );
 }
 function Badge({ className = "", variant = "default", children }) {
@@ -308,9 +267,6 @@ function Hero({ goBook }) {
   return (
     <div className="relative overflow-hidden">
       <div className="absolute inset-0 bg-gradient-to-b from-black via-black/60 to-white" />
-      <div className="absolute -top-24 right-[-120px] h-[420px] w-[420px] rounded-full bg-white/10 blur-3xl" />
-      <div className="absolute top-40 left-[-160px] h-[460px] w-[460px] rounded-full bg-white/10 blur-3xl" />
-
       <div className="relative mx-auto max-w-6xl px-4 pt-10 pb-14 md:pt-16 md:pb-20">
         <div className="grid md:grid-cols-2 gap-10 items-center">
           <div>
@@ -483,16 +439,14 @@ function FleetSection({ onBook }) {
   const [tier, setTier] = useState("all");
   const [q, setQ] = useState("");
 
-  const tiers = useMemo(() => {
-    const set = new Set(fleet.map((c) => c.tier));
-    return ["all", ...Array.from(set)];
-  }, []);
-
-  const filtered = useMemo(() => {
-    return fleet
-      .filter((c) => (tier === "all" ? true : c.tier === tier))
-      .filter((c) => `${c.name} ${c.tier} ${c.perks.join(" ")}`.toLowerCase().includes(q.trim().toLowerCase()));
-  }, [tier, q]);
+  const tiers = useMemo(() => ["all", ...Array.from(new Set(fleet.map((c) => c.tier)))], []);
+  const filtered = useMemo(
+    () =>
+      fleet
+        .filter((c) => (tier === "all" ? true : c.tier === tier))
+        .filter((c) => `${c.name} ${c.tier} ${c.perks.join(" ")}`.toLowerCase().includes(q.trim().toLowerCase())),
+    [tier, q]
+  );
 
   return (
     <div id="fleet" className="mx-auto max-w-6xl px-4 py-14 md:py-18">
@@ -600,26 +554,6 @@ function PricingSection({ goBook }) {
             </Card>
           ))}
         </div>
-
-        <div className="mt-8 rounded-3xl border bg-white p-6">
-          <div className="grid md:grid-cols-3 gap-4">
-            <InfoPill icon={<MapPin className="h-4 w-4" />} title="Delivery" desc="Available by request (fee may apply)." />
-            <InfoPill icon={<Clock className="h-4 w-4" />} title="Long-term" desc="Weekly/monthly rates available." />
-            <InfoPill icon={<ShieldCheck className="h-4 w-4" />} title="Verification" desc="Quick ID verification for safety." />
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function InfoPill({ icon, title, desc }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className="h-10 w-10 rounded-2xl border grid place-items-center">{icon}</div>
-      <div>
-        <div className="font-semibold">{title}</div>
-        <div className="text-sm text-black/60">{desc}</div>
       </div>
     </div>
   );
@@ -659,6 +593,8 @@ function FAQSection() {
 
 function ContactSection({ selectedVehicleId, clearSelected }) {
   const [status, setStatus] = useState("idle");
+  const [error, setError] = useState("");
+  const formEl = useRef(null);
 
   const [form, setForm] = useState({
     name: "",
@@ -681,17 +617,30 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
     setForm((p) => ({ ...p, [key]: value }));
   }
 
-  function onSubmit(e) {
-    e.preventDefault();
-    const url = buildGooglePrefillUrl(form);
-    window.open(url, "_blank", "noopener,noreferrer");
-    setStatus("sent");
+  function validate() {
+    if (!form.name.trim()) return "Please enter your full name.";
+    if (!form.phone.trim()) return "Please enter your phone number.";
+    if (!form.email.trim()) return "Please enter your email.";
+    if (!form.start) return "Please select a start date.";
+    if (!form.end) return "Please select an end date.";
+    if (!form.acknowledgment) return "Please check the acknowledgment box.";
+    return "";
   }
 
-  const selected = useMemo(() => {
-    const id = form.vehicle === NO_PREFERENCE ? null : form.vehicle;
-    return id ? fleet.find((c) => c.id === id) ?? null : null;
-  }, [form.vehicle]);
+  function onSubmit(e) {
+    e.preventDefault();
+    const msg = validate();
+    if (msg) {
+      setError(msg);
+      setStatus("error");
+      return;
+    }
+    setError("");
+    setStatus("sending");
+    formEl.current?.submit(); // submit into hidden iframe
+    setStatus("sent");
+    setForm((p) => ({ ...p, start: "", end: "", pickupArea: "", message: "", acknowledgment: false }));
+  }
 
   return (
     <div className="bg-black text-white">
@@ -705,13 +654,21 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
             <h2 className="mt-3 text-3xl md:text-4xl font-semibold tracking-tight">Request a booking</h2>
             <p className="mt-3 text-white/75">
               Submit details below and we’ll confirm availability, verification steps, and final pricing for your direct rental.
-              Corporate and long-term rentals welcome.
             </p>
 
             <div className="mt-6 grid gap-3">
-              <ContactRow icon={<MapPin className="h-4 w-4" />} label={BRAND.locationLabel} />
-              <ContactRow icon={<Phone className="h-4 w-4" />} label={BRAND.phone} />
-              <ContactRow icon={<Car className="h-4 w-4" />} label={BRAND.ig} />
+              <div className="flex items-center gap-3 text-white/80">
+                <div className="h-9 w-9 rounded-2xl border border-white/15 bg-white/10 grid place-items-center"><MapPin className="h-4 w-4" /></div>
+                <div className="text-sm">{BRAND.locationLabel}</div>
+              </div>
+              <div className="flex items-center gap-3 text-white/80">
+                <div className="h-9 w-9 rounded-2xl border border-white/15 bg-white/10 grid place-items-center"><Phone className="h-4 w-4" /></div>
+                <div className="text-sm">{BRAND.phone}</div>
+              </div>
+              <div className="flex items-center gap-3 text-white/80">
+                <div className="h-9 w-9 rounded-2xl border border-white/15 bg-white/10 grid place-items-center"><Car className="h-4 w-4" /></div>
+                <div className="text-sm">{BRAND.ig}</div>
+              </div>
             </div>
 
             {selectedVehicleId ? (
@@ -727,22 +684,36 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
 
           <Card className="rounded-3xl border-white/15 bg-white/10 text-white">
             <CardContent className="p-6 pt-6">
-              <form onSubmit={onSubmit} className="grid gap-4">
+              <iframe name="hidden_iframe" title="hidden_iframe" className="hidden" />
+
+              <form
+                ref={formEl}
+                onSubmit={onSubmit}
+                action={GOOGLE_FORM.actionUrl}
+                method="POST"
+                target="hidden_iframe"
+                className="grid gap-4"
+              >
+                {/* Hidden fields for Google dropdown/multiple choice (option text) */}
+                <input type="hidden" name={GOOGLE_FORM.entry.vehicle} value={toGoogleVehicleValue(form.vehicle)} />
+                <input type="hidden" name={GOOGLE_FORM.entry.requestType} value={form.bookingType} />
+                <input type="hidden" name={GOOGLE_FORM.entry.acknowledgment} value={form.acknowledgment ? GOOGLE_FORM.values.ack : ""} />
+
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="grid gap-2">
                     <Label className="text-white/80">Full name</Label>
-                    <Input value={form.name} onChange={(e) => update("name", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="Your name" required />
+                    <Input name={GOOGLE_FORM.entry.name} value={form.name} onChange={(e) => update("name", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="Your name" required />
                   </div>
                   <div className="grid gap-2">
                     <Label className="text-white/80">Phone</Label>
-                    <Input value={form.phone} onChange={(e) => update("phone", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="(555) 123-4567" required />
+                    <Input name={GOOGLE_FORM.entry.phone} value={form.phone} onChange={(e) => update("phone", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="(555) 123-4567" required />
                   </div>
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="grid gap-2">
                     <Label className="text-white/80">Email</Label>
-                    <Input type="email" value={form.email} onChange={(e) => update("email", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="you@email.com" required />
+                    <Input name={GOOGLE_FORM.entry.email} type="email" value={form.email} onChange={(e) => update("email", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="you@email.com" required />
                   </div>
                   <div className="grid gap-2">
                     <Label className="text-white/80">Request type</Label>
@@ -760,33 +731,27 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
                     <option className="text-black" value={NO_PREFERENCE}>(No preference)</option>
                     {fleet.map((c) => <option key={c.id} className="text-black" value={c.id}>{c.name}</option>)}
                   </select>
-                  {selected ? <div className="text-xs text-white/55">Selected: {selected.name}</div> : <div className="text-xs text-white/55">No preference selected</div>}
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="grid gap-2">
                     <Label className="text-white/80">Start date</Label>
-                    <Input type="date" value={form.start} onChange={(e) => update("start", e.target.value)} className="border-white/15 bg-white/10 text-white" required />
+                    <Input name={GOOGLE_FORM.entry.start} type="date" value={form.start} onChange={(e) => update("start", e.target.value)} className="border-white/15 bg-white/10 text-white" required />
                   </div>
                   <div className="grid gap-2">
                     <Label className="text-white/80">End date</Label>
-                    <Input type="date" value={form.end} onChange={(e) => update("end", e.target.value)} className="border-white/15 bg-white/10 text-white" required />
+                    <Input name={GOOGLE_FORM.entry.end} type="date" value={form.end} onChange={(e) => update("end", e.target.value)} className="border-white/15 bg-white/10 text-white" required />
                   </div>
                 </div>
 
                 <div className="grid gap-2">
                   <Label className="text-white/80">Pickup or delivery area</Label>
-                  <Input value={form.pickupArea} onChange={(e) => update("pickupArea", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="e.g., DCA, BWI, Bethesda, Rockville" />
+                  <Input name={GOOGLE_FORM.entry.pickupArea} value={form.pickupArea} onChange={(e) => update("pickupArea", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="e.g., DCA, BWI, Bethesda" />
                 </div>
 
                 <div className="grid gap-2">
                   <Label className="text-white/80">Additional message / note</Label>
-                  <Textarea value={form.message} onChange={(e) => update("message", e.target.value)} className="min-h-[120px] border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="Flight time, delivery request, special needs, etc." />
-                  {!GOOGLE_FORM.entry.message ? (
-                    <div className="text-xs text-white/55">
-                      Note: Add “Additional message / note” to your Google Form, then paste its entry id into <span className="font-mono">GOOGLE_FORM.entry.message</span>.
-                    </div>
-                  ) : null}
+                  <Textarea name={GOOGLE_FORM.entry.message} value={form.message} onChange={(e) => update("message", e.target.value)} className="min-h-[120px] border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="Flight time, delivery request, special needs, etc." />
                 </div>
 
                 <div className="rounded-2xl border border-white/15 bg-white/10 p-4">
@@ -796,12 +761,16 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
                   </label>
                 </div>
 
-                <Button type="submit" className="rounded-2xl h-11" size="lg">Continue to Google Form</Button>
+                {status === "error" ? <div className="text-sm text-red-200">{error}</div> : null}
+
+                <Button type="submit" className="rounded-2xl h-11" size="lg" disabled={status === "sending"}>
+                  {status === "sending" ? "Submitting…" : "Send booking request"}
+                </Button>
 
                 {status === "sent" ? (
                   <div className="text-sm text-white/70">
-                    A Google Form opened in a new tab with your details filled in. Please press <span className="font-semibold">Submit</span> to complete your request.
-                    If it didn’t open, allow pop-ups and try again.
+                    Request received. We’ll review availability and contact you shortly.
+                    If you need immediate help, call/text 315-553-4600 or email info@nomoluxe.com.
                   </div>
                 ) : null}
 
@@ -817,15 +786,6 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
   );
 }
 
-function ContactRow({ icon, label }) {
-  return (
-    <div className="flex items-center gap-3 text-white/80">
-      <div className="h-9 w-9 rounded-2xl border border-white/15 bg-white/10 grid place-items-center">{icon}</div>
-      <div className="text-sm">{label}</div>
-    </div>
-  );
-}
-
 function Footer({ setPage }) {
   return (
     <div className="bg-black text-white">
@@ -837,7 +797,9 @@ function Footer({ setPage }) {
           </div>
           <div className="flex flex-wrap gap-2">
             {["home", "fleet", "pricing", "faq", "contact"].map((p) => (
-              <Button key={p} variant="secondary" size="sm" className="rounded-xl" onClick={() => setPage(p)}>{p.toUpperCase()}</Button>
+              <Button key={p} variant="secondary" size="sm" className="rounded-xl" onClick={() => setPage(p)}>
+                {p.toUpperCase()}
+              </Button>
             ))}
           </div>
         </div>
@@ -859,10 +821,6 @@ function Footer({ setPage }) {
 export default function App() {
   const [page, setPage] = useState("home");
   const [selectedVehicleId, setSelectedVehicleId] = useState(null);
-
-  useEffect(() => {
-    if (import.meta?.env?.DEV) runSelfTests();
-  }, []);
 
   const goBook = () => setPage("contact");
   const onBookVehicle = (id) => {
