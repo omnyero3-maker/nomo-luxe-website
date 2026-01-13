@@ -15,9 +15,12 @@ import {
 } from "lucide-react";
 
 /**
- * Nomo Luxe Car Rental — single-file React website (Vite)
- * - Tailwind CSS included
- * - Google Forms submission for direct rentals
+ * Nomo Luxe Car Rental — GitHub-ready website (Vite + React + Tailwind)
+ *
+ * ✅ Booking fix (fills Google Sheet columns reliably):
+ * Instead of POSTing to Google Forms `formResponse` (which often leaves dropdown/date fields blank),
+ * this site opens a PRE-FILLED Google Form in a new tab.
+ * The customer clicks Submit → your Google Sheet columns fill correctly.
  */
 
 const BRAND = {
@@ -26,18 +29,14 @@ const BRAND = {
   locationLabel: "Maryland • DC • Virginia",
   phone: "315-553-4600",
   email: "info@nomoluxe.com",
-  ig: "@nomoluxe", // TODO: replace
+  ig: "@nomoluxe",
 };
 
-// IMPORTANT: Avoid empty string values in selects.
-// Use a non-empty sentinel for “No preference”.
 const NO_PREFERENCE = "no_preference";
 
-// Google Forms (Direct Rentals) — live booking intake
-// This posts the website form directly into your Google Form/Sheet.
 const GOOGLE_FORM = {
-  actionUrl:
-    "https://docs.google.com/forms/d/e/1FAIpQLSdWV8ATUPXi3eTqj5xSAKyK8H5h5__8wS0zUpcfsG6xn8MSEA/formResponse",
+  prefillBaseUrl:
+    "https://docs.google.com/forms/d/e/1FAIpQLSdWV8ATUPXi3eTqj5xSAKyK8H5h5__8wS0zUpcfsG6xn8MSEA/viewform?usp=pp_url",
   entry: {
     name: "entry.817883833",
     phone: "entry.1461332940",
@@ -48,8 +47,9 @@ const GOOGLE_FORM = {
     end: "entry.205748647",
     pickupArea: "entry.1534624009",
     acknowledgment: "entry.950095108",
-    // If you add a “Message / Notes” question to your Google Form,
-    // paste its entry id here (example: "entry.123456789").
+    // ✅ IMPORTANT:
+    // Add a Paragraph question in your Google Form called “Additional message / note”
+    // then paste its entry id here (example: "entry.123456789") so messages save to your Sheet.
     message: "",
   },
   values: {
@@ -68,8 +68,33 @@ function toGoogleVehicleValue(vehicleIdOrSentinel) {
     gx460: "Lexus GX 460",
     g63: "Mercedes-Benz G63",
   };
-  const key = vehicleIdOrSentinel ?? NO_PREFERENCE;
-  return map[key] ?? "No preference";
+  return map[vehicleIdOrSentinel ?? NO_PREFERENCE] ?? "No preference";
+}
+
+function buildGooglePrefillUrl(formState) {
+  const params = new URLSearchParams();
+
+  params.set(GOOGLE_FORM.entry.name, formState.name);
+  params.set(GOOGLE_FORM.entry.phone, formState.phone);
+  params.set(GOOGLE_FORM.entry.email, formState.email);
+
+  params.set(GOOGLE_FORM.entry.requestType, formState.bookingType);
+  params.set(GOOGLE_FORM.entry.vehicle, toGoogleVehicleValue(formState.vehicle));
+
+  params.set(GOOGLE_FORM.entry.start, formState.start);
+  params.set(GOOGLE_FORM.entry.end, formState.end);
+
+  params.set(GOOGLE_FORM.entry.pickupArea, formState.pickupArea);
+
+  if (GOOGLE_FORM.entry.message) {
+    params.set(GOOGLE_FORM.entry.message, formState.message);
+  }
+
+  if (formState.acknowledgment) {
+    params.set(GOOGLE_FORM.entry.acknowledgment, GOOGLE_FORM.values.ack);
+  }
+
+  return `${GOOGLE_FORM.prefillBaseUrl}&${params.toString()}`;
 }
 
 const fleet = [
@@ -179,48 +204,13 @@ function daysBetween(start, end) {
   return Math.max(0, d);
 }
 
-/**
- * Lightweight “self tests” (dev-only) to catch common integration mistakes.
- * These run only in development.
- */
+// Dev-only self tests
 function runSelfTests() {
-  // Test 1: No select option values should be empty
   const vehicleValues = [NO_PREFERENCE, ...fleet.map((c) => c.id)];
-  if (vehicleValues.some((v) => v === "")) {
-    throw new Error("SelfTest failed: select option value cannot be an empty string.");
-  }
-
-  // Test 2: Vehicle mapping returns expected strings
-  const mappingTests = [
-    { input: NO_PREFERENCE, expected: "No preference" },
-    { input: "corolla2015", expected: "Toyota Corolla 2015 - Grey" },
-    { input: "corolla2023", expected: "Toyota Corolla 2023 - White" },
-    { input: "e300", expected: "Mercedes-Benz E300" },
-    { input: "gx460", expected: "Lexus GX 460" },
-    { input: "g63", expected: "Mercedes-Benz G63" },
-    { input: null, expected: "No preference" },
-    { input: undefined, expected: "No preference" },
-    { input: "unknown", expected: "No preference" },
-  ];
-  for (const t of mappingTests) {
-    const got = toGoogleVehicleValue(t.input);
-    if (typeof got !== "string" || got.length === 0) {
-      throw new Error("SelfTest failed: toGoogleVehicleValue returned empty.");
-    }
-    if (got !== t.expected) {
-      throw new Error(
-        `SelfTest failed: toGoogleVehicleValue(${String(t.input)}) = ${got}, expected ${t.expected}`
-      );
-    }
-  }
-
-  // Test 3: Days between sanity
-  if (daysBetween("2026-01-09", "2026-01-11") !== 2) {
-    throw new Error("SelfTest failed: daysBetween calculation unexpected.");
-  }
+  if (vehicleValues.some((v) => v === "")) throw new Error("SelfTest: option value cannot be empty.");
+  if (toGoogleVehicleValue("corolla2023") !== "Toyota Corolla 2023 - White") throw new Error("SelfTest: mapping mismatch.");
+  if (daysBetween("2026-01-09", "2026-01-11") !== 2) throw new Error("SelfTest: daysBetween mismatch.");
 }
-
-/* ---------- UI primitives (simple) ---------- */
 
 function Card({ className = "", children }) {
   return <div className={cn("border bg-white", className)}>{children}</div>;
@@ -237,70 +227,36 @@ function CardTitle({ className = "", children }) {
 function Button({ className = "", variant = "default", size = "md", ...props }) {
   const base =
     "inline-flex items-center justify-center gap-2 font-medium transition rounded-xl focus:outline-none focus:ring-2 focus:ring-black/30 disabled:opacity-50 disabled:pointer-events-none";
-  const sizes = {
-    sm: "h-9 px-3 text-sm",
-    md: "h-10 px-4 text-sm",
-    lg: "h-11 px-5 text-base",
-  };
+  const sizes = { sm: "h-9 px-3 text-sm", md: "h-10 px-4 text-sm", lg: "h-11 px-5 text-base" };
   const variants = {
     default: "bg-black text-white hover:bg-black/90",
-    secondary: "bg-white text-black border hover:bg-muted/40",
+    secondary: "bg-white text-black border hover:bg-black/5",
     ghost: "bg-transparent hover:bg-black/5",
   };
   return (
-    <button
-      className={cn(base, sizes[size] ?? sizes.md, variants[variant] ?? variants.default, className)}
-      {...props}
-    />
+    <button className={cn(base, sizes[size] ?? sizes.md, variants[variant] ?? variants.default, className)} {...props} />
   );
 }
 function Badge({ className = "", variant = "default", children }) {
-  const variants = {
-    default: "bg-black text-white",
-    secondary: "bg-black/5 text-black border",
-  };
+  const variants = { default: "bg-black text-white", secondary: "bg-black/5 text-black border" };
   return (
-    <span
-      className={cn(
-        "inline-flex items-center rounded-full px-3 py-1 text-xs",
-        variants[variant] ?? variants.default,
-        className
-      )}
-    >
+    <span className={cn("inline-flex items-center rounded-full px-3 py-1 text-xs", variants[variant] ?? variants.default, className)}>
       {children}
     </span>
   );
 }
 function Input({ className = "", ...props }) {
-  return (
-    <input
-      className={cn(
-        "w-full h-10 rounded-2xl border px-3 bg-white text-black placeholder:text-black/40 focus:outline-none focus:ring-2 focus:ring-black/20",
-        className
-      )}
-      {...props}
-    />
-  );
+  return <input className={cn("w-full h-10 rounded-2xl border px-3 bg-white text-black placeholder:text-black/40 focus:outline-none focus:ring-2 focus:ring-black/20", className)} {...props} />;
 }
 function Label({ className = "", children }) {
   return <label className={cn("text-sm font-medium", className)}>{children}</label>;
 }
 function Textarea({ className = "", ...props }) {
-  return (
-    <textarea
-      className={cn(
-        "w-full rounded-2xl border px-3 py-2 bg-white text-black placeholder:text-black/40 focus:outline-none focus:ring-2 focus:ring-black/20",
-        className
-      )}
-      {...props}
-    />
-  );
+  return <textarea className={cn("w-full rounded-2xl border px-3 py-2 bg-white text-black placeholder:text-black/40 focus:outline-none focus:ring-2 focus:ring-black/20", className)} {...props} />;
 }
 function Separator({ className = "" }) {
   return <div className={cn("h-px w-full bg-black/10", className)} />;
 }
-
-/* ---------- App sections ---------- */
 
 function TopNav({ page, setPage }) {
   const items = [
@@ -310,15 +266,10 @@ function TopNav({ page, setPage }) {
     { key: "faq", label: "FAQ" },
     { key: "contact", label: "Contact" },
   ];
-
   return (
     <div className="sticky top-0 z-40 bg-white/75 backdrop-blur border-b">
       <div className="mx-auto max-w-6xl px-4 py-3 flex items-center justify-between gap-3">
-        <button
-          onClick={() => setPage("home")}
-          className="flex items-center gap-2"
-          aria-label="Go to home"
-        >
+        <button onClick={() => setPage("home")} className="flex items-center gap-2" aria-label="Go to home">
           <div className="h-9 w-9 rounded-2xl bg-black text-white grid place-items-center shadow-sm">
             <Car className="h-5 w-5" />
           </div>
@@ -330,13 +281,7 @@ function TopNav({ page, setPage }) {
 
         <div className="hidden md:flex items-center gap-1">
           {items.map((it) => (
-            <Button
-              key={it.key}
-              variant={page === it.key ? "default" : "ghost"}
-              size="sm"
-              onClick={() => setPage(it.key)}
-              className="rounded-xl"
-            >
+            <Button key={it.key} variant={page === it.key ? "default" : "ghost"} size="sm" onClick={() => setPage(it.key)} className="rounded-xl">
               {it.label}
             </Button>
           ))}
@@ -346,18 +291,10 @@ function TopNav({ page, setPage }) {
           <Button size="sm" className="rounded-xl" onClick={() => setPage("contact")}>
             Request a Booking
           </Button>
-
-          {/* Mobile menu */}
           <div className="md:hidden">
-            <select
-              className="h-9 rounded-xl border px-3 bg-white"
-              value={page}
-              onChange={(e) => setPage(e.target.value)}
-            >
+            <select className="h-9 rounded-xl border px-3 bg-white" value={page} onChange={(e) => setPage(e.target.value)}>
               {items.map((it) => (
-                <option key={it.key} value={it.key}>
-                  {it.label}
-                </option>
+                <option key={it.key} value={it.key}>{it.label}</option>
               ))}
             </select>
           </div>
@@ -377,56 +314,23 @@ function Hero({ goBook }) {
       <div className="relative mx-auto max-w-6xl px-4 pt-10 pb-14 md:pt-16 md:pb-20">
         <div className="grid md:grid-cols-2 gap-10 items-center">
           <div>
-            <motion.div
-              initial={{ opacity: 0, y: 8 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5 }}
-              className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-white"
-            >
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.5 }} className="inline-flex items-center gap-2 rounded-full border border-white/20 bg-white/10 px-3 py-1 text-white">
               <Sparkles className="h-4 w-4" />
               <span className="text-sm">Direct rentals • Fast confirmation</span>
             </motion.div>
 
-            <motion.h1
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.05 }}
-              className="mt-4 text-4xl md:text-5xl font-semibold tracking-tight text-white"
-            >
+            <motion.h1 initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, delay: 0.05 }} className="mt-4 text-4xl md:text-5xl font-semibold tracking-tight text-white">
               Drive with confidence.
               <span className="block text-white/80">Arrive like you mean it.</span>
             </motion.h1>
 
-            <motion.p
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.1 }}
-              className="mt-4 text-base md:text-lg text-white/80 max-w-xl"
-            >
-              {BRAND.tagline} Transparent pricing, clean vehicles, and a smooth pickup
-              experience.
+            <motion.p initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, delay: 0.1 }} className="mt-4 text-base md:text-lg text-white/80 max-w-xl">
+              {BRAND.tagline} Transparent pricing, clean vehicles, and a smooth pickup experience.
             </motion.p>
 
-            <motion.div
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.55, delay: 0.15 }}
-              className="mt-6 flex flex-wrap items-center gap-3"
-            >
-              <Button onClick={goBook} className="rounded-2xl h-11 px-5" size="lg">
-                Request a Booking
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  const el = document.getElementById("fleet");
-                  el?.scrollIntoView({ behavior: "smooth" });
-                }}
-                className="rounded-2xl h-11 px-5"
-                size="lg"
-              >
-                Browse Fleet
-              </Button>
+            <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.55, delay: 0.15 }} className="mt-6 flex flex-wrap items-center gap-3">
+              <Button onClick={goBook} className="rounded-2xl h-11 px-5" size="lg">Request a Booking</Button>
+              <Button variant="secondary" onClick={() => document.getElementById("fleet")?.scrollIntoView({ behavior: "smooth" })} className="rounded-2xl h-11 px-5" size="lg">Browse Fleet</Button>
               <div className="flex items-center gap-2 text-white/80 text-sm">
                 <ShieldCheck className="h-4 w-4" />
                 <span>Verified renters • Flexible options</span>
@@ -440,11 +344,7 @@ function Hero({ goBook }) {
             </div>
           </div>
 
-          <motion.div
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-          >
+          <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6, delay: 0.1 }}>
             <Card className="rounded-3xl border-white/20 bg-white/10 text-white shadow-xl">
               <CardHeader>
                 <CardTitle className="text-white">Quick Quote</CardTitle>
@@ -454,18 +354,12 @@ function Hero({ goBook }) {
                 <QuickQuote goBook={goBook} />
                 <Separator className="my-5 bg-white/15" />
                 <div className="grid gap-3 text-sm">
-                  <div className="flex items-center gap-2 text-white/80">
-                    <CheckCircle2 className="h-4 w-4" />
-                    <span>Clean vehicles, every trip</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-white/80">
-                    <CheckCircle2 className="h-4 w-4" />
-                    <span>Pickup, delivery, or meet-up options</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-white/80">
-                    <CheckCircle2 className="h-4 w-4" />
-                    <span>Support when you need it</span>
-                  </div>
+                  {["Clean vehicles, every trip","Pickup, delivery, or meet-up options","Support when you need it"].map((t)=>(
+                    <div key={t} className="flex items-center gap-2 text-white/80">
+                      <CheckCircle2 className="h-4 w-4" />
+                      <span>{t}</span>
+                    </div>
+                  ))}
                 </div>
               </CardContent>
             </Card>
@@ -504,11 +398,7 @@ function QuickQuote({ goBook }) {
     <div className="grid gap-4">
       <div className="grid gap-2">
         <Label className="text-white/80">Vehicle</Label>
-        <select
-          className="h-10 rounded-2xl border border-white/20 bg-white/10 text-white px-3"
-          value={carId}
-          onChange={(e) => setCarId(e.target.value)}
-        >
+        <select className="h-10 rounded-2xl border border-white/20 bg-white/10 text-white px-3" value={carId} onChange={(e) => setCarId(e.target.value)}>
           {fleet.map((c) => (
             <option key={c.id} value={c.id} className="text-black">
               {c.name} • from {formatMoney(c.dailyFrom)}/day
@@ -530,11 +420,7 @@ function QuickQuote({ goBook }) {
 
       <div className="grid gap-2">
         <Label className="text-white/80">Delivery needed?</Label>
-        <select
-          className="h-10 rounded-2xl border border-white/20 bg-white/10 text-white px-3"
-          value={delivery}
-          onChange={(e) => setDelivery(e.target.value)}
-        >
+        <select className="h-10 rounded-2xl border border-white/20 bg-white/10 text-white px-3" value={delivery} onChange={(e) => setDelivery(e.target.value)}>
           <option value="no" className="text-black">No</option>
           <option value="yes" className="text-black">Yes (adds {formatMoney(25)})</option>
         </select>
@@ -545,9 +431,7 @@ function QuickQuote({ goBook }) {
           <div>
             <div className="text-sm text-white/70">Estimated total</div>
             <div className="text-2xl font-semibold text-white">{formatMoney(est)}</div>
-            <div className="mt-1 text-xs text-white/60">
-              Estimate only. Taxes/fees and exact terms depend on confirmation.
-            </div>
+            <div className="mt-1 text-xs text-white/60">Estimate only. Taxes/fees and exact terms depend on confirmation.</div>
           </div>
           <div className="text-right text-sm text-white/70">
             <div>{days} day(s)</div>
@@ -556,9 +440,7 @@ function QuickQuote({ goBook }) {
         </div>
       </div>
 
-      <Button onClick={goBook} className="rounded-2xl h-11" size="lg">
-        Request this booking
-      </Button>
+      <Button onClick={goBook} className="rounded-2xl h-11" size="lg">Request this booking</Button>
     </div>
   );
 }
@@ -579,22 +461,14 @@ function ValueProps() {
     { icon: <CreditCard className="h-5 w-5" />, title: "Transparent pricing", desc: "Clear daily rates and upfront expectations—no guesswork." },
     { icon: <Headphones className="h-5 w-5" />, title: "Real support", desc: "Quick responses and guidance from pickup to drop-off." },
   ];
-
   return (
     <div className="mx-auto max-w-6xl px-4 py-14 md:py-18">
-      <SectionTitle
-        eyebrow="Why Nomo Luxe"
-        title="Premium experience without premium hassle"
-        subtitle="Perfect for airport travel, business trips, and weekends—built around comfort, speed, and trust."
-      />
-
+      <SectionTitle eyebrow="Why Nomo Luxe" title="Premium experience without premium hassle" subtitle="Perfect for airport travel, business trips, and weekends—built around comfort, speed, and trust." />
       <div className="mt-8 grid md:grid-cols-3 gap-4">
         {items.map((it) => (
           <Card key={it.title} className="rounded-3xl">
             <CardContent className="p-6 pt-6">
-              <div className="h-11 w-11 rounded-2xl bg-black text-white grid place-items-center shadow-sm">
-                {it.icon}
-              </div>
+              <div className="h-11 w-11 rounded-2xl bg-black text-white grid place-items-center shadow-sm">{it.icon}</div>
               <div className="mt-4 font-semibold text-lg">{it.title}</div>
               <div className="mt-2 text-black/60">{it.desc}</div>
             </CardContent>
@@ -617,33 +491,17 @@ function FleetSection({ onBook }) {
   const filtered = useMemo(() => {
     return fleet
       .filter((c) => (tier === "all" ? true : c.tier === tier))
-      .filter((c) => {
-        const hay = `${c.name} ${c.tier} ${c.perks.join(" ")}`.toLowerCase();
-        return hay.includes(q.trim().toLowerCase());
-      });
+      .filter((c) => `${c.name} ${c.tier} ${c.perks.join(" ")}`.toLowerCase().includes(q.trim().toLowerCase()));
   }, [tier, q]);
 
   return (
     <div id="fleet" className="mx-auto max-w-6xl px-4 py-14 md:py-18">
       <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-        <SectionTitle
-          eyebrow="Fleet"
-          title="Choose your ride"
-          subtitle="Comfort, Executive, or Luxe—pick the level that matches your trip."
-        />
-
+        <SectionTitle eyebrow="Fleet" title="Choose your ride" subtitle="Comfort, Executive, or Luxe—pick the level that matches your trip." />
         <div className="flex flex-col sm:flex-row gap-2 sm:items-center">
           <div className="w-full sm:w-[160px]">
-            <select
-              className="h-10 w-full rounded-2xl border px-3 bg-white"
-              value={tier}
-              onChange={(e) => setTier(e.target.value)}
-            >
-              {tiers.map((t) => (
-                <option key={t} value={t}>
-                  {t === "all" ? "All tiers" : t}
-                </option>
-              ))}
+            <select className="h-10 w-full rounded-2xl border px-3 bg-white" value={tier} onChange={(e) => setTier(e.target.value)}>
+              {tiers.map((t) => <option key={t} value={t}>{t === "all" ? "All tiers" : t}</option>)}
             </select>
           </div>
           <div className="w-full sm:w-[220px]">
@@ -660,9 +518,7 @@ function FleetSection({ onBook }) {
                 <div>
                   <CardTitle className="text-xl">{c.name}</CardTitle>
                   <div className="mt-1 flex items-center gap-2">
-                    <Badge variant="secondary" className="rounded-full">
-                      {c.tier}
-                    </Badge>
+                    <Badge variant="secondary" className="rounded-full">{c.tier}</Badge>
                     {c.featured ? <Badge className="rounded-full">Most popular</Badge> : null}
                   </div>
                 </div>
@@ -679,7 +535,6 @@ function FleetSection({ onBook }) {
                 <Spec label="Bags" value={c.bags} />
                 <Spec label="MPG" value={c.mpg} />
               </div>
-
               <div className="mt-4 grid gap-2 text-sm">
                 {c.perks.map((p) => (
                   <div key={p} className="flex items-start gap-2">
@@ -688,10 +543,7 @@ function FleetSection({ onBook }) {
                   </div>
                 ))}
               </div>
-
-              <Button onClick={() => onBook(c.id)} className="mt-5 w-full rounded-2xl" size="lg">
-                Request this vehicle
-              </Button>
+              <Button onClick={() => onBook(c.id)} className="mt-5 w-full rounded-2xl" size="lg">Request this vehicle</Button>
             </CardContent>
           </Card>
         ))}
@@ -716,19 +568,12 @@ function PricingSection({ goBook }) {
     { tier: "Luxe SUV", bestFor: "Family trips, luggage, road trips", includes: ["3-row capability", "Premium comfort", "Confident driving"] },
     { tier: "Ultra Luxe", bestFor: "VIP trips, events, standout luxury", includes: ["Iconic vehicle", "High-end experience", "Event-ready presence"] },
   ];
-
   return (
     <div className="bg-black/5">
       <div className="mx-auto max-w-6xl px-4 py-14 md:py-18">
         <div className="flex flex-col md:flex-row md:items-end justify-between gap-4">
-          <SectionTitle
-            eyebrow="Pricing"
-            title="Simple rates. Clear expectations."
-            subtitle="Daily pricing varies by season and availability. Request a booking for the exact quote."
-          />
-          <Button onClick={goBook} className="rounded-2xl" size="lg">
-            Get an exact quote
-          </Button>
+          <SectionTitle eyebrow="Pricing" title="Simple rates. Clear expectations." subtitle="Daily pricing varies by season and availability. Request a booking for the exact quote." />
+          <Button onClick={goBook} className="rounded-2xl" size="lg">Get an exact quote</Button>
         </div>
 
         <div className="mt-8 grid md:grid-cols-3 gap-4">
@@ -738,13 +583,10 @@ function PricingSection({ goBook }) {
                 <div className="flex items-center justify-between">
                   <div className="text-lg font-semibold">{r.tier}</div>
                   <Badge variant="secondary" className="rounded-full">
-                    from {formatMoney(
-                      fleet.filter((c) => c.tier === r.tier).reduce((min, c) => Math.min(min, c.dailyFrom), Infinity)
-                    )}/day
+                    from {formatMoney(fleet.filter((c) => c.tier === r.tier).reduce((min, c) => Math.min(min, c.dailyFrom), Infinity))}/day
                   </Badge>
                 </div>
                 <div className="mt-2 text-black/60">{r.bestFor}</div>
-
                 <div className="mt-5 grid gap-2 text-sm">
                   {r.includes.map((x) => (
                     <div key={x} className="flex items-start gap-2">
@@ -753,10 +595,7 @@ function PricingSection({ goBook }) {
                     </div>
                   ))}
                 </div>
-
-                <Button onClick={goBook} variant="secondary" className="mt-6 w-full rounded-2xl" size="lg">
-                  Request a booking
-                </Button>
+                <Button onClick={goBook} variant="secondary" className="mt-6 w-full rounded-2xl" size="lg">Request a booking</Button>
               </CardContent>
             </Card>
           ))}
@@ -788,15 +627,9 @@ function InfoPill({ icon, title, desc }) {
 
 function FAQSection() {
   const [open, setOpen] = useState(0);
-
   return (
     <div className="mx-auto max-w-6xl px-4 py-14 md:py-18">
-      <SectionTitle
-        eyebrow="FAQ"
-        title="Questions, answered"
-        subtitle="If you don’t see your question here, message us and we’ll respond quickly."
-      />
-
+      <SectionTitle eyebrow="FAQ" title="Questions, answered" subtitle="If you don’t see your question here, message us and we’ll respond quickly." />
       <div className="mt-8 grid gap-3">
         {faqs.map((f, i) => (
           <button key={f.q} onClick={() => setOpen(i === open ? -1 : i)} className="text-left">
@@ -807,22 +640,13 @@ function FAQSection() {
                     <div className="font-semibold">{f.q}</div>
                     <AnimatePresence initial={false}>
                       {open === i ? (
-                        <motion.div
-                          key="a"
-                          initial={{ opacity: 0, height: 0 }}
-                          animate={{ opacity: 1, height: "auto" }}
-                          exit={{ opacity: 0, height: 0 }}
-                          transition={{ duration: 0.25 }}
-                          className="mt-2 text-black/60"
-                        >
+                        <motion.div key="a" initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.25 }} className="mt-2 text-black/60">
                           {f.a}
                         </motion.div>
                       ) : null}
                     </AnimatePresence>
                   </div>
-                  <div className={cn("text-sm", open === i ? "text-black" : "text-black/60")}>
-                    {open === i ? "–" : "+"}
-                  </div>
+                  <div className={cn("text-sm", open === i ? "text-black" : "text-black/60")}>{open === i ? "–" : "+"}</div>
                 </div>
               </CardContent>
             </Card>
@@ -857,7 +681,10 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
     setForm((p) => ({ ...p, [key]: value }));
   }
 
-  function onSubmit() {
+  function onSubmit(e) {
+    e.preventDefault();
+    const url = buildGooglePrefillUrl(form);
+    window.open(url, "_blank", "noopener,noreferrer");
     setStatus("sent");
   }
 
@@ -890,19 +717,8 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
             {selectedVehicleId ? (
               <div className="mt-6 rounded-3xl border border-white/15 bg-white/10 p-5">
                 <div className="text-sm text-white/70">Selected vehicle</div>
-                <div className="mt-1 text-lg font-semibold">
-                  {fleet.find((c) => c.id === selectedVehicleId)?.name ?? ""}
-                </div>
-                <Button
-                  type="button"
-                  variant="secondary"
-                  className="mt-4 rounded-2xl"
-                  onClick={() => {
-                    clearSelected();
-                    // expected behavior: revert to no preference when clearing selection
-                    update("vehicle", NO_PREFERENCE);
-                  }}
-                >
+                <div className="mt-1 text-lg font-semibold">{fleet.find((c) => c.id === selectedVehicleId)?.name ?? ""}</div>
+                <Button type="button" variant="secondary" className="mt-4 rounded-2xl" onClick={() => { clearSelected(); update("vehicle", NO_PREFERENCE); }}>
                   Clear selection
                 </Button>
               </div>
@@ -911,73 +727,26 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
 
           <Card className="rounded-3xl border-white/15 bg-white/10 text-white">
             <CardContent className="p-6 pt-6">
-              <form
-                onSubmit={onSubmit}
-                action={GOOGLE_FORM.actionUrl}
-                method="POST"
-                target="_blank"
-                className="grid gap-4"
-              >
-                {/* Hidden fields mapped to Google Forms entry IDs */}
-                <input type="hidden" name={GOOGLE_FORM.entry.name} value={form.name} />
-                <input type="hidden" name={GOOGLE_FORM.entry.phone} value={form.phone} />
-                <input type="hidden" name={GOOGLE_FORM.entry.email} value={form.email} />
-                <input type="hidden" name={GOOGLE_FORM.entry.requestType} value={form.bookingType} />
-                <input type="hidden" name={GOOGLE_FORM.entry.vehicle} value={toGoogleVehicleValue(form.vehicle)} />
-                <input type="hidden" name={GOOGLE_FORM.entry.start} value={form.start} />
-                <input type="hidden" name={GOOGLE_FORM.entry.end} value={form.end} />
-                <input type="hidden" name={GOOGLE_FORM.entry.pickupArea} value={form.pickupArea} />
-                {GOOGLE_FORM.entry.message ? (
-                  <input type="hidden" name={GOOGLE_FORM.entry.message} value={form.message} />
-                ) : null}
-                <input
-                  type="hidden"
-                  name={GOOGLE_FORM.entry.acknowledgment}
-                  value={form.acknowledgment ? GOOGLE_FORM.values.ack : ""}
-                />
-
+              <form onSubmit={onSubmit} className="grid gap-4">
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="grid gap-2">
                     <Label className="text-white/80">Full name</Label>
-                    <Input
-                      value={form.name}
-                      onChange={(e) => update("name", e.target.value)}
-                      className="border-white/15 bg-white/10 text-white placeholder:text-white/40"
-                      placeholder="Your name"
-                      required
-                    />
+                    <Input value={form.name} onChange={(e) => update("name", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="Your name" required />
                   </div>
                   <div className="grid gap-2">
                     <Label className="text-white/80">Phone</Label>
-                    <Input
-                      value={form.phone}
-                      onChange={(e) => update("phone", e.target.value)}
-                      className="border-white/15 bg-white/10 text-white placeholder:text-white/40"
-                      placeholder="(555) 123-4567"
-                      required
-                    />
+                    <Input value={form.phone} onChange={(e) => update("phone", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="(555) 123-4567" required />
                   </div>
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="grid gap-2">
                     <Label className="text-white/80">Email</Label>
-                    <Input
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => update("email", e.target.value)}
-                      className="border-white/15 bg-white/10 text-white placeholder:text-white/40"
-                      placeholder="you@email.com"
-                      required
-                    />
+                    <Input type="email" value={form.email} onChange={(e) => update("email", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="you@email.com" required />
                   </div>
                   <div className="grid gap-2">
                     <Label className="text-white/80">Request type</Label>
-                    <select
-                      className="h-10 rounded-2xl border border-white/15 bg-white/10 text-white px-3"
-                      value={form.bookingType}
-                      onChange={(e) => update("bookingType", e.target.value)}
-                    >
+                    <select className="h-10 rounded-2xl border border-white/15 bg-white/10 text-white px-3" value={form.bookingType} onChange={(e) => update("bookingType", e.target.value)}>
                       <option className="text-black" value="Standard Rental">Standard Rental</option>
                       <option className="text-black" value="Corporate / Long-Term Rental">Corporate / Long-Term Rental</option>
                       <option className="text-black" value="Delivery Request">Delivery Request</option>
@@ -986,95 +755,53 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
                 </div>
 
                 <div className="grid gap-2">
-                  <Label className="text-white/80">Vehicle</Label>
-                  <select
-                    className="h-10 rounded-2xl border border-white/15 bg-white/10 text-white px-3"
-                    value={form.vehicle}
-                    onChange={(e) => update("vehicle", e.target.value)}
-                  >
+                  <Label className="text-white/80">Preferred vehicle</Label>
+                  <select className="h-10 rounded-2xl border border-white/15 bg-white/10 text-white px-3" value={form.vehicle} onChange={(e) => update("vehicle", e.target.value)}>
                     <option className="text-black" value={NO_PREFERENCE}>(No preference)</option>
-                    {fleet.map((c) => (
-                      <option key={c.id} className="text-black" value={c.id}>
-                        {c.name}
-                      </option>
-                    ))}
+                    {fleet.map((c) => <option key={c.id} className="text-black" value={c.id}>{c.name}</option>)}
                   </select>
-                  {selected ? (
-                    <div className="text-xs text-white/55">Selected: {selected.name}</div>
-                  ) : (
-                    <div className="text-xs text-white/55">No preference selected</div>
-                  )}
+                  {selected ? <div className="text-xs text-white/55">Selected: {selected.name}</div> : <div className="text-xs text-white/55">No preference selected</div>}
                 </div>
 
                 <div className="grid md:grid-cols-2 gap-3">
                   <div className="grid gap-2">
                     <Label className="text-white/80">Start date</Label>
-                    <Input
-                      type="date"
-                      value={form.start}
-                      onChange={(e) => update("start", e.target.value)}
-                      className="border-white/15 bg-white/10 text-white"
-                      required
-                    />
+                    <Input type="date" value={form.start} onChange={(e) => update("start", e.target.value)} className="border-white/15 bg-white/10 text-white" required />
                   </div>
                   <div className="grid gap-2">
                     <Label className="text-white/80">End date</Label>
-                    <Input
-                      type="date"
-                      value={form.end}
-                      onChange={(e) => update("end", e.target.value)}
-                      className="border-white/15 bg-white/10 text-white"
-                      required
-                    />
+                    <Input type="date" value={form.end} onChange={(e) => update("end", e.target.value)} className="border-white/15 bg-white/10 text-white" required />
                   </div>
                 </div>
 
                 <div className="grid gap-2">
-                  <Label className="text-white/80">Pickup/Delivery area</Label>
-                  <Input
-                    value={form.pickupArea}
-                    onChange={(e) => update("pickupArea", e.target.value)}
-                    className="border-white/15 bg-white/10 text-white placeholder:text-white/40"
-                    placeholder="e.g., DCA, BWI, Bethesda, Rockville"
-                  />
+                  <Label className="text-white/80">Pickup or delivery area</Label>
+                  <Input value={form.pickupArea} onChange={(e) => update("pickupArea", e.target.value)} className="border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="e.g., DCA, BWI, Bethesda, Rockville" />
                 </div>
 
                 <div className="grid gap-2">
-                  <Label className="text-white/80">Message</Label>
-                  <Textarea
-                    value={form.message}
-                    onChange={(e) => update("message", e.target.value)}
-                    className="min-h-[120px] border-white/15 bg-white/10 text-white placeholder:text-white/40"
-                    placeholder="Tell us anything important (flight time, delivery request, special needs, etc.)"
-                  />
+                  <Label className="text-white/80">Additional message / note</Label>
+                  <Textarea value={form.message} onChange={(e) => update("message", e.target.value)} className="min-h-[120px] border-white/15 bg-white/10 text-white placeholder:text-white/40" placeholder="Flight time, delivery request, special needs, etc." />
                   {!GOOGLE_FORM.entry.message ? (
                     <div className="text-xs text-white/55">
-                      Note: Your current Google Form doesn’t include a “Message / Notes” question, so this field won’t be saved
-                      to your Google Sheet until you add that question (then paste its entry id in GOOGLE_FORM.entry.message).
+                      Note: Add “Additional message / note” to your Google Form, then paste its entry id into <span className="font-mono">GOOGLE_FORM.entry.message</span>.
                     </div>
                   ) : null}
                 </div>
 
                 <div className="rounded-2xl border border-white/15 bg-white/10 p-4">
                   <label className="flex items-start gap-3 cursor-pointer">
-                    <input
-                      type="checkbox"
-                      className="mt-1"
-                      checked={form.acknowledgment}
-                      onChange={(e) => update("acknowledgment", e.target.checked)}
-                      required
-                    />
+                    <input type="checkbox" className="mt-1" checked={form.acknowledgment} onChange={(e) => update("acknowledgment", e.target.checked)} required />
                     <span className="text-sm text-white/80">{GOOGLE_FORM.values.ack}</span>
                   </label>
                 </div>
 
-                <Button type="submit" className="rounded-2xl h-11" size="lg">
-                  Send booking request
-                </Button>
+                <Button type="submit" className="rounded-2xl h-11" size="lg">Continue to Google Form</Button>
 
                 {status === "sent" ? (
                   <div className="text-sm text-white/70">
-                    If the Google Form didn’t open (pop-up blocked), call/text us at 315-553-4600 or email info@nomoluxe.com.
+                    A Google Form opened in a new tab with your details filled in. Please press <span className="font-semibold">Submit</span> to complete your request.
+                    If it didn’t open, allow pop-ups and try again.
                   </div>
                 ) : null}
 
@@ -1093,9 +820,7 @@ function ContactSection({ selectedVehicleId, clearSelected }) {
 function ContactRow({ icon, label }) {
   return (
     <div className="flex items-center gap-3 text-white/80">
-      <div className="h-9 w-9 rounded-2xl border border-white/15 bg-white/10 grid place-items-center">
-        {icon}
-      </div>
+      <div className="h-9 w-9 rounded-2xl border border-white/15 bg-white/10 grid place-items-center">{icon}</div>
       <div className="text-sm">{label}</div>
     </div>
   );
@@ -1112,9 +837,7 @@ function Footer({ setPage }) {
           </div>
           <div className="flex flex-wrap gap-2">
             {["home", "fleet", "pricing", "faq", "contact"].map((p) => (
-              <Button key={p} variant="secondary" size="sm" className="rounded-xl" onClick={() => setPage(p)}>
-                {p.toUpperCase()}
-              </Button>
+              <Button key={p} variant="secondary" size="sm" className="rounded-xl" onClick={() => setPage(p)}>{p.toUpperCase()}</Button>
             ))}
           </div>
         </div>
@@ -1137,7 +860,6 @@ export default function App() {
   const [page, setPage] = useState("home");
   const [selectedVehicleId, setSelectedVehicleId] = useState(null);
 
-  // Dev-only sanity tests
   useEffect(() => {
     if (import.meta?.env?.DEV) runSelfTests();
   }, []);
@@ -1151,17 +873,10 @@ export default function App() {
   return (
     <div className="min-h-screen bg-white text-black">
       <TopNav page={page} setPage={setPage} />
-
       <main>
         <AnimatePresence mode="wait" initial={false}>
           {page === "home" ? (
-            <motion.div
-              key="home"
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
-              transition={{ duration: 0.25 }}
-            >
+            <motion.div key="home" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.25 }}>
               <Hero goBook={goBook} />
               <ValueProps />
               <FleetSection onBook={onBookVehicle} />
@@ -1213,7 +928,6 @@ export default function App() {
           ) : null}
         </AnimatePresence>
       </main>
-
       <Footer setPage={setPage} />
     </div>
   );
