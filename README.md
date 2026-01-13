@@ -1,31 +1,22 @@
-# Nomo Luxe Car Rental Website
+# Nomo Luxe Car Rental Website (GitHub-ready)
 
-This is a simple React (Vite) + Tailwind website for **Nomo Luxe Car Rental**, including a booking form that submits directly to Google Forms.
+This is a React (Vite) + Tailwind site for **Nomo Luxe Car Rental**.
 
-## What you need installed
-- Node.js (LTS recommended)
+## ✅ Booking / Google Sheet columns filling
+This version uses a **prefilled Google Form** link for the booking flow (most reliable).
+When customers click **Continue to Google Form**, it opens your form in a new tab with fields prefilled.
+They press **Submit** and your Google Sheet columns fill correctly (Request type, preferred vehicle, dates, area, acknowledgment).
+
+## Optional: Save “Additional message / note” to your Google Sheet
+1. In your Google Form, add a **Paragraph** question named **Additional message / note**
+2. Use the Form prefill feature once and copy the `entry.#########` id for that question
+3. Paste it into `src/App.jsx` at `GOOGLE_FORM.entry.message`
 
 ## Run locally
-1. Download this project and unzip it
-2. Open the folder
-3. Run:
-
 ```bash
 npm install
 npm run dev
 ```
 
-Vite will print a local URL (usually http://localhost:5173).
-
-## Deploy (easy)
-- Upload this folder to GitHub
-- Deploy with Vercel (Import GitHub repo)
-
-## Google Forms
-This site posts form submissions to:
-
-- https://docs.google.com/forms/d/e/1FAIpQLSdWV8ATUPXi3eTqj5xSAKyK8H5h5__8wS0zUpcfsG6xn8MSEA/formResponse
-
-If you add a **Message / Notes** question in your Google Form, update the entry id in `src/App.jsx`:
-
-`GOOGLE_FORM.entry.message = "entry.XXXXXXXXX"`
+## Deploy
+Upload to GitHub and deploy with Vercel (Import GitHub repo).
